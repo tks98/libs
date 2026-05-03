@@ -89,6 +89,52 @@ jobs:
             exit 1
           fi
 
+  libscap-fuzz-smoke:
+    name: libscap-fuzz-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Libs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends ca-certificates build-essential git clang llvm pkg-config autoconf automake libtool libelf-dev wget linux-headers-$(uname -r) python3
+
+      - name: Install cmake
+        uses: ./.github/actions/install-cmake
+
+      - name: Git safe directory
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Rebuild fuzz seed corpus
+        run: |
+          WORK_DIR=/tmp/falco-libs-corpus-smoke ./test/libscap/fuzz/tools/recreate_seed_corpus.sh
+
+      - name: Build fuzz target
+        run: |
+          cmake -B build-fuzz -S . \
+            -DUSE_BUNDLED_DEPS=ON \
+            -DCREATE_TEST_TARGETS=ON \
+            -DENABLE_LIBSCAP_TESTS=OFF \
+            -DENABLE_LIBSCAP_FUZZERS=ON \
+            -DUSE_ASAN=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-fuzz --target fuzz_scap_event_decode --parallel $(nproc)
+
+      - name: Run fuzz smoke test
+        run: |
+          FUZZ_WORK_DIR=$(mktemp -d /tmp/falco-libs-fuzz-work.XXXXXX)
+          cp -R /tmp/falco-libs-corpus-smoke/corpus/fuzz_scap_event_decode/. "$FUZZ_WORK_DIR"
+          ./build-fuzz/test/libscap/fuzz/fuzz_scap_event_decode \
+            "$FUZZ_WORK_DIR" \
+            -dict=./test/libscap/fuzz/fuzz_scap_event_decode.dict \
+            -max_total_time=15
+
   build-libs-linux-amd64-cross-arm64:
     name: build-libs-linux-amd64-cross-arm64 (bundled_deps)
     runs-on: ubuntu-24.04
